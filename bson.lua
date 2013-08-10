@@ -34,6 +34,11 @@ If an encoded table has both a number and a string representation of that number
 
 When decoding, if the key is a string representation of an integer ('123'), it is converted into
 an integer in the resulting Lua table.
+
+* BSON.Encode(tbl) -> string: Encodes a table
+* BSON.Decode(str) -> table: Decodes a string
+* BSON.BinaryType: C type for specifying data to be encoded using the binary BSON type.
+  Delcaration is 'struct { int32_t size; uint8_t data[?]; }'
 ]]
 
 local Bson = {}
@@ -253,7 +258,7 @@ end
 -- ------------------------------------------------------------------
 
 -- Type for binary data.
-Bson.BinaryType = ffi.typeof("struct { size_t size; uint8_t data[?]; }")
+Bson.BinaryType = ffi.typeof("struct { int32_t size; uint8_t data[?]; }")
 
 -- Converts a table to a BSON-encoded Lua string.
 function Bson.Encode(tbl)
