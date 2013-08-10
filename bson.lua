@@ -7,6 +7,8 @@ The following BSON values are supported:
 - Writing Lua Type -> BSON Type                   -> Reading Lua Type
 ---------------------------------------------------------------------
 - number           -> double*                     -> number
+- (not supported)  -> 32-bit integer              -> number
+- int64            -> 64-bit integer*             -> int64
 - boolean          -> boolean                     -> boolean
 - (not supported)  -> nil                         -> nil
 - string           -> string (UTF8 not supported) -> string
@@ -15,8 +17,6 @@ The following BSON values are supported:
 - Bson.BinaryType  -> binary                      -> Bson.BinaryType (subtype is set to generic when writing and ignored when reading)
 ---------------------------------------------------------------------
 Coming soon
-- (not supported)  -> 32-bit integer              -> number
-- int64            -> 64-bit integer*             -> int64
 - int8/16/32       -> 32-bit integer
 - uint8/16         -> 32-bit integer
 - double           -> double
@@ -69,6 +69,8 @@ local constants = {
 	array       = "\x04",
 	binary      = "\x05",
 	bool        = "\x08",
+	int32       = "\x10",
+	int64       = "\x12",
 	
 	bTrue       = "\x00",
 	bFalse      = "\x01",
@@ -112,6 +114,10 @@ local function serializeDouble(v)
 	return ffi_string(doubleslot(v), sizeof(double))
 end
 
+local function serializeInt64(v)
+	return ffi_string(int64slot(convertEndianLong(v)), sizeof(int64))
+end
+
 local function deserializeInt32(str)
 	local b = int32slot()
 	ffi_copy(b, str, sizeof(int32))
@@ -121,6 +127,12 @@ end
 local function deserializeDouble(str)
 	local b = doubleslot()
 	ffi_copy(b, str, sizeof(double))
+	return b[0]
+end
+
+local function deserializeInt64(str)
+	local b = int64slot()
+	ffi_copy(b, str, sizeof(int64))
 	return b[0]
 end
 
@@ -151,7 +163,7 @@ local function encodeDocument(tbl, buffer, referenced)
 			buffer[#buffer+1] = constants.null
 			buffer[#buffer+1] = serializeDouble(v)
 			size = size + sizeof(byte) + #k+1 + sizeof(double)
-		
+			
 		elseif typ == "string" then
 			buffer[#buffer+1] = constants.string
 			buffer[#buffer+1] = k
@@ -160,26 +172,37 @@ local function encodeDocument(tbl, buffer, referenced)
 			buffer[#buffer+1] = v
 			buffer[#buffer+1] = constants.null
 			size = size + sizeof(byte) + #k+1 + sizeof(int32) + #v+1
-		
+			
 		elseif typ == "boolean" then
 			buffer[#buffer+1] = constants.bool
 			buffer[#buffer+1] = k
 			buffer[#buffer+1] = v and constants.bTrue or constants.bFalse
 			size = size + sizeof(byte)*2 + #k+1
-		
+			
 		elseif typ == "table" then
 			buffer[#buffer+1] = constants.subdocument
 			buffer[#buffer+1] = k
 			buffer[#buffer+1] = constants.null
-			size = size + encodeDocument(v, buffer, referenced)
-		
+			size = size + sizeof(byte) + #k+1 + encodeDocument(v, buffer, referenced)
+			
 		elseif istype(Bson.BinaryType, v) then
 			buffer[#buffer+1] = constants.binary
 			buffer[#buffer+1] = k
 			buffer[#buffer+1] = constants.null
-			buffer[#buffer+1] = convertEndian(v.size)
+			buffer[#buffer+1] = serializeInt32(v.size)
 			buffer[#buffer+1] = constants.null -- Subtype
 			buffer[#buffer+1] = ffi_string(v.data, v.size)
+			size = size + sizeof(byte) + #k+1 + sizeof(int32) + 1 + v.size
+			
+		elseif istype(int64, v) then
+			buffer[#buffer+1] = constants.int64
+			buffer[#buffer+1] = k
+			buffer[#buffer+1] = constants.null
+			buffer[#buffer+1] = serializeInt64(v)
+			size = size + sizeof(byte) + #k+1 + sizeof(int64)
+			
+		else
+			error("Cannot serialize value: "..tostring(v))
 		end
 	end
 	
@@ -233,7 +256,7 @@ local function decodeDocument(str, i)
 			tbl[k] = str:sub(i, i+size-2)
 			i = i + size
 			
-		elseif id == constants.subdocument or id == consants.array then
+		elseif id == constants.subdocument or id == constants.array then
 			tbl[k], i = decodeDocument(str, i)
 		
 		elseif id == constants.binary then
@@ -247,9 +270,17 @@ local function decodeDocument(str, i)
 			tbl[k] = bin
 			i = i + size
 			
-		elseif id == consants.bool then
+		elseif id == constants.bool then
 			tbl[k] = str:sub(i,i) ~= constants.bFalse
 			i = i + 1
+			
+		elseif id == constants.int32 then
+			tbl[k] = deserializeInt32(str:sub(i, i-1+sizeof(int32)))
+			i = i + sizeof(int32)
+			
+		elseif id == constants.int64 then
+			tbl[k] = deserializeInt64(str:sub(i, i-1+sizeof(int64)))
+			i = i + sizeof(int64)
 			
 		else
 			error("Unknown/unsupported BSON type: 0x"..bit.tohex(string.byte(id)))
