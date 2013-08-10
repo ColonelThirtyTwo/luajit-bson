@@ -47,8 +47,10 @@ local Bson = {}
 local ffi = require "ffi"
 local bit = require "bit"
 
-local sizeof = ffi.sizeof
-local istype = ffi.istype
+local sizeof     = ffi.sizeof
+local istype     = ffi.istype
+local ffi_copy   = ffi.copy
+local ffi_string = ffi.string
 
 local byte       = ffi.typeof("uint8_t")
 local int32      = ffi.typeof("int32_t")
@@ -103,22 +105,22 @@ end
 
 -- [De]serialization routines
 local function serializeInt32(v)
-	return ffi.string(int32slot(convertEndian(v)), ffi.sizeof(int32))
+	return ffi_string(int32slot(convertEndian(v)), sizeof(int32))
 end
 
 local function serializeDouble(v)
-	return ffi.string(doubleslot(v), ffi.sizeof(double))
+	return ffi_string(doubleslot(v), sizeof(double))
 end
 
 local function deserializeInt32(str)
 	local b = int32slot()
-	ffi.copy(b, str, sizeof(int32))
+	ffi_copy(b, str, sizeof(int32))
 	return convertEndian(b[0])
 end
 
 local function deserializeDouble(str)
 	local b = doubleslot()
-	ffi.copy(b, str, sizeof(double))
+	ffi_copy(b, str, sizeof(double))
 	return b[0]
 end
 
@@ -171,13 +173,13 @@ local function encodeDocument(tbl, buffer, referenced)
 			buffer[#buffer+1] = constants.null
 			size = size + encodeDocument(v, buffer, referenced)
 		
-		elseif ffi.istype(Bson.BinaryType, v) then
+		elseif istype(Bson.BinaryType, v) then
 			buffer[#buffer+1] = constants.binary
 			buffer[#buffer+1] = k
 			buffer[#buffer+1] = constants.null
 			buffer[#buffer+1] = convertEndian(v.size)
 			buffer[#buffer+1] = constants.null -- Subtype
-			buffer[#buffer+1] = ffi.string(v.data, v.size)
+			buffer[#buffer+1] = ffi_string(v.data, v.size)
 		end
 	end
 	
@@ -189,7 +191,7 @@ local function encodeDocument(tbl, buffer, referenced)
 end
 
 local function decodeDocument(str, i)
-	i = i + ffi.sizeof(int32) -- skip document size; don't need it
+	i = i + sizeof(int32) -- skip document size; don't need it
 	
 	local tbl = {}
 	
@@ -220,13 +222,13 @@ local function decodeDocument(str, i)
 		
 		-- Read value
 		if id == constants.double then
-			tbl[k] = deserializeDouble(str:sub(i, i-1+ffi.sizeof(double)))
-			i = i + ffi.sizeof(double)
+			tbl[k] = deserializeDouble(str:sub(i, i-1+sizeof(double)))
+			i = i + sizeof(double)
 			
 		elseif id == constants.string then
-			local size = deserializeInt32(str:sub(i, i-1+ffi.sizeof(int32)))
+			local size = deserializeInt32(str:sub(i, i-1+sizeof(int32)))
 			assert(size >= 1, "Malformed BSON: Invalid string size")
-			i = i + ffi.sizeof(int32)
+			i = i + sizeof(int32)
 			
 			tbl[k] = str:sub(i, i+size-2)
 			i = i + size
@@ -235,13 +237,13 @@ local function decodeDocument(str, i)
 			tbl[k], i = decodeDocument(str, i)
 		
 		elseif id == constants.binary then
-			local size = deserializeInt32(str:sub(i, i-1+ffi.sizeof(int32)))
+			local size = deserializeInt32(str:sub(i, i-1+sizeof(int32)))
 			assert(size >= 1, "Malformed BSON: Invalid binary size")
-			i = i + ffi.sizeof(int32) + 1 -- Skip the subtype byte
+			i = i + sizeof(int32) + 1 -- Skip the subtype byte
 			
 			local bin = Bson.BinaryType(size)
 			bin.size = size
-			ffi.copy(bin.data, str:sub(i, i+size-1), size)
+			ffi_copy(bin.data, str:sub(i, i+size-1), size)
 			tbl[k] = bin
 			i = i + size
 			
